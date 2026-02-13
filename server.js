@@ -67,19 +67,53 @@ const requireAuth = (req, res, next) => {
 // --- FUNZIONI UTILI ---
 
 // Controlla spazio su disco (Linux)
+function getFolderSizeSync(dirPath) {
+    let size = 0;
+    const files = fs.readdirSync(dirPath);
+    for (let i = 0; i < files.length; i++) {
+        const filePath = path.join(dirPath, files[i]);
+        try {
+            const stats = fs.statSync(filePath);
+            if (stats.isFile()) size += stats.size;
+            else if (stats.isDirectory()) size += getFolderSizeSync(filePath);
+        } catch (e) { }
+    }
+    return size;
+}
+
 function getDiskUsage(callback) {
-    exec('df -h .', (error, stdout, stderr) => {
-        if (error) { return callback("Errore"); }
-        const lines = stdout.trim().split('\n');
-        const diskInfo = lines[1] ? lines[1].split(/\s+/) : [];
-        // Filesystem, Size, Used, Avail, Use%, Mounted
-        callback(null, {
-            size: diskInfo[1],
-            used: diskInfo[2],
-            avail: diskInfo[3],
-            percent: diskInfo[4]
+    const limitMB = 100; // Limite Alwaysdata
+
+    if (process.platform === "win32") {
+        // --- LOGICA PER WINDOWS (LOCALE) ---
+        try {
+            const usedBytes = getFolderSizeSync('.');
+            const usedMB = (usedBytes / (1024 * 1024)).toFixed(2);
+            const percent = Math.round((usedMB / limitMB) * 100);
+            callback(null, {
+                size: limitMB + ' MB',
+                used: usedMB + ' MB',
+                avail: (limitMB - usedMB).toFixed(2) + ' MB',
+                percent: percent
+            });
+        } catch (e) {
+            callback(null, { size: '?', used: '?', avail: '?', percent: '0%' });
+        }
+    } else {
+        // --- LOGICA PER LINUX (ALWAYSDATA) ---
+        exec('du -sk .', (error, stdout) => {
+            if (error) return callback(null, { size: '?', used: '?', avail: '?', percent: '0%' });
+            const usedKB = parseInt(stdout.trim().split(/\s+/)[0]);
+            const usedMB = (usedKB / 1024).toFixed(2);
+            const percent = Math.round((usedMB / limitMB) * 100);
+            callback(null, {
+                size: limitMB + ' MB',
+                used: usedMB + ' MB',
+                avail: (limitMB - usedMB).toFixed(2) + ' MB',
+                percent: percent
+            });
         });
-    });
+    }
 }
 
 // Fetch Mail & Cleanup

@@ -1,152 +1,240 @@
 let rawMessages = [];
+let rawAliases = [];
+let selectedAliases = new Set(); // ID degli alias selezionati
 
-// --- AUTH ---
+// --- AUTH & INIT ---
 async function checkAuth() {
     try {
         const res = await fetch('/api/check-auth');
         const data = await res.json();
         if(data.authed) showDashboard();
-    } catch (e) {
-        console.error("Errore check auth", e);
-    }
+    } catch(e) { console.error(e); }
 }
 
 async function login() {
     const code = document.getElementById('auth-code').value;
-    try {
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ code })
-        });
-        const data = await res.json();
-        if(data.success) showDashboard();
-        else document.getElementById('login-error').style.display = 'block';
-    } catch (e) {
-        alert("Errore di connessione");
-    }
+    const res = await fetch('/api/login', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ code })
+    });
+    if((await res.json()).success) showDashboard();
+    else document.getElementById('login-error').style.display='block';
 }
 
 function showDashboard() {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('dashboard').classList.remove('hidden');
-    loadData();
+    loadData(true); // true = primo caricamento, seleziona tutto di default
 }
 
-// --- DATA ---
-async function loadData() {
+// --- DATA LOGIC ---
+async function loadData(firstLoad = false) {
     try {
         const res = await fetch('/api/data');
         if(res.status === 401) return location.reload();
         const data = await res.json();
-        
-        // Disk Stats
-        const disk = data.disk;
-        document.getElementById('disk-stats').textContent = 
-            `Disco: ${disk.used || '?'} usato su ${disk.size || '?'} (${disk.percent || '?'}%)`;
 
-        // Render Aliases
-        const tbody = document.querySelector('#alias-table tbody');
-        tbody.innerHTML = '';
-        data.aliases.forEach(a => {
-            const expDate = a.expires_at === -1 ? 'Mai' : new Date(a.expires_at).toLocaleDateString();
-            const tr = document.createElement('tr');
-            if(a.is_expired) tr.classList.add('expired');
-            
-            tr.innerHTML = `
-                <td title="${a.address}" style="max-width:100px; overflow:hidden; text-overflow:ellipsis;">${a.address}</td>
-                <td>${expDate}</td>
-                <td><button class="btn btn-danger" style="padding:2px 6px; font-size:10px" onclick="deleteAlias(${a.id})">X</button></td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-        // Render Messages List
+        rawAliases = data.aliases;
         rawMessages = data.messages;
-        renderMailList(data.messages);
-    } catch (e) {
-        console.error("Errore caricamento dati", e);
-    }
+
+        // Se è il primo avvio o se ci sono nuovi alias, aggiungili alla selezione di default
+        // Nota: Manteniamo lo stato di selezione corrente
+        if(firstLoad) {
+            rawAliases.forEach(a => selectedAliases.add(a.id));
+        }
+
+        renderDisk(data.disk);
+        renderAliases();
+        renderMail();
+    } catch(e) { console.error("Err loadData", e); }
 }
 
-function renderMailList(msgs) {
+async function forceRefresh() {
+    // Animazione visuale
+    const btn = document.querySelector('button[title="Aggiorna ora"]');
+    btn.innerHTML = '...';
+    await fetch('/api/refresh', { method: 'POST' });
+    await loadData();
+    btn.innerHTML = '↻';
+}
+
+// --- RENDERING ---
+function renderDisk(disk) {
+    document.getElementById('disk-stats').textContent = 
+        `Disco: ${disk.percent || '?'}% (${disk.used} / ${disk.size})`;
+}
+
+function renderAliases() {
+    const list = document.getElementById('alias-list');
+    list.innerHTML = '';
+    
+    rawAliases.forEach(a => {
+        const li = document.createElement('li');
+        li.className = 'alias-item';
+        const exp = a.expires_at === -1 ? '∞' : new Date(a.expires_at).toLocaleDateString();
+        
+        // Checkbox state
+        const isChecked = selectedAliases.has(a.id) ? 'checked' : '';
+
+        li.innerHTML = `
+            <div class="alias-left">
+                <input type="checkbox" onchange="toggleAlias(${a.id}, this.checked)" ${isChecked}>
+                <div style="min-width:0;">
+                    <div class="alias-addr" onclick="copyToClipboard('${a.address}')" title="Clicca per copiare">${a.address}</div>
+                    <div class="alias-exp">Scade: ${exp}</div>
+                </div>
+            </div>
+            <div class="alias-actions">
+                <button class="btn btn-sm" onclick="purgeAlias(${a.id})" title="Svuota mail vecchie">🧹</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteAlias(${a.id})" title="Elimina account">X</button>
+            </div>
+        `;
+        list.appendChild(li);
+    });
+}
+
+function renderMail() {
     const container = document.getElementById('mail-list');
     container.innerHTML = '';
-    if(msgs.length === 0) {
-        container.innerHTML = '<p style="padding:10px; color:#999;">Nessun messaggio.</p>';
+
+    // Filter logic
+    const filtered = rawMessages.filter(m => selectedAliases.has(m.alias_id));
+    document.getElementById('mail-count').textContent = `(${filtered.length})`;
+
+    if(filtered.length === 0) {
+        container.innerHTML = '<div style="padding:10px; text-align:center; color:#888">Nessun messaggio</div>';
         return;
     }
 
-    msgs.forEach((m, idx) => {
+    filtered.forEach(m => {
         const div = document.createElement('div');
         div.className = 'mail-item';
         const date = new Date(m.received_at).toLocaleString();
+        
+        // Trova alias name per visualizzazione
+        const aliasName = rawAliases.find(a => a.id === m.alias_id)?.address || '?';
+
         div.innerHTML = `
-            <div class="mail-header"><span>${m.from_addr}</span> <small>${date}</small></div>
-            <div class="mail-sub"><strong>[${m.alias_address}]</strong> ${m.subject}</div>
+            <div class="mail-info" onclick="openMail(${m.id})">
+                <span class="mail-date">${date} -> [${aliasName}]</span>
+                <div class="mail-from">${m.from_addr}</div>
+                <div class="mail-sub">${m.subject}</div>
+            </div>
+            <div class="mail-actions">
+                <button class="btn btn-sm btn-danger" onclick="deleteMsg(${m.id})">🗑</button>
+            </div>
         `;
-        div.onclick = () => openMail(idx);
         container.appendChild(div);
     });
 }
 
-// --- ACTIONS ---
+// --- USER ACTIONS ---
+
+// Alias Toggle
+function toggleAlias(id, checked) {
+    if(checked) selectedAliases.add(id);
+    else selectedAliases.delete(id);
+    renderMail();
+}
+
+function toggleSelectAll() {
+    const allIds = rawAliases.map(a => a.id);
+    if(selectedAliases.size === allIds.length) {
+        selectedAliases.clear();
+    } else {
+        allIds.forEach(id => selectedAliases.add(id));
+    }
+    renderAliases();
+    renderMail();
+}
+
+// Clipboard
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        // Feedback visuale minimo (es. cambio colore temporaneo)
+        alert("Copiato: " + text); // Semplice e brutale come richiesto
+    });
+}
+
+// Create Alias
 async function createAlias() {
     const addr = document.getElementById('new-alias').value;
     const dur = document.getElementById('duration').value;
-    if(!addr) return alert("Inserisci indirizzo");
+    if(!addr) return;
 
-    try {
-        const res = await fetch('/api/aliases', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ address: addr, durationDays: dur })
-        });
-        
-        if(res.ok) {
-            document.getElementById('new-alias').value = '';
-            loadData();
-        } else {
-            alert("Errore creazione. Forse esiste già?");
-        }
-    } catch (e) {
-        alert("Errore durante la creazione");
+    const res = await fetch('/api/aliases', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ address: addr, durationDays: dur })
+    });
+    if(res.ok) {
+        document.getElementById('new-alias').value = '';
+        loadData(true); // Ricarica e seleziona i nuovi
+    } else {
+        alert("Errore: alias forse già esistente");
     }
 }
 
+// Delete Alias
 async function deleteAlias(id) {
     if(!confirm("Eliminare account e tutte le sue mail?")) return;
-    try {
-        await fetch(`/api/aliases/${id}`, { method: 'DELETE' });
+    await fetch(`/api/aliases/${id}`, { method: 'DELETE' });
+    selectedAliases.delete(id);
+    loadData();
+}
+
+// Purge Messages (Sweep)
+async function purgeAlias(id) {
+    const dateStr = prompt("Inserisci data LIMITE (YYYY-MM-DD).\nTutti i messaggi PRIMA di questa data verranno eliminati.");
+    if(!dateStr) return;
+
+    const timestamp = new Date(dateStr).getTime();
+    if(isNaN(timestamp)) return alert("Data non valida");
+
+    const res = await fetch(`/api/aliases/${id}/purge?before=${timestamp}`, { method: 'DELETE' });
+    const data = await res.json();
+    if(data.success) {
+        alert(`Eliminati ${data.count} messaggi.`);
         loadData();
-    } catch (e) {
-        alert("Errore durante l'eliminazione");
     }
 }
 
-function openMail(idx) {
-    const m = rawMessages[idx];
+// Delete Single Message
+async function deleteMsg(id) {
+    if(!confirm("Eliminare messaggio?")) return;
+    await fetch(`/api/messages/${id}`, { method: 'DELETE' });
+    // Rimuovi localmente per velocità
+    rawMessages = rawMessages.filter(m => m.id !== id);
+    renderMail();
+}
+
+// Open/Close Mail Viewer
+function openMail(id) {
+    const m = rawMessages.find(msg => msg.id === id);
+    if(!m) return;
+
     document.getElementById('mail-view').classList.remove('hidden');
     document.getElementById('view-subject').textContent = m.subject;
     document.getElementById('view-from').textContent = m.from_addr;
     document.getElementById('view-to').textContent = m.alias_address;
     
-    // Usa iframe per visualizzare l'HTML in sicurezza
-    const container = document.getElementById('mail-content');
-    container.innerHTML = '';
+    const wrapper = document.getElementById('mail-content-wrapper');
+    wrapper.innerHTML = '';
     const iframe = document.createElement('iframe');
-    container.appendChild(iframe);
+    wrapper.appendChild(iframe);
     
-    // Scrivi dentro l'iframe
     const doc = iframe.contentWindow.document;
     doc.open();
-    doc.write(m.body_html || `<pre>${m.body_text}</pre>`);
+    // Styling base dentro l'iframe per leggibilità
+    doc.write(`<style>body{font-family:sans-serif; padding:10px; margin:0; word-wrap: break-word;}</style>`);
+    doc.write(m.body_html || `<pre style="white-space:pre-wrap">${m.body_text}</pre>`);
     doc.close();
 }
 
 function closeMail() {
     document.getElementById('mail-view').classList.add('hidden');
+    // Pulisci iframe per memoria
+    document.getElementById('mail-content-wrapper').innerHTML = '';
 }
 
-// Avvia controllo auth all'apertura
+// Start
 checkAuth();

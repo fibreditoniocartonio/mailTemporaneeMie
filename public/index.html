@@ -2,9 +2,8 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TempMail Manager</title>
-    <!-- Collegamento al file CSS esterno -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>TempMail Lite</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,73 +12,91 @@
 
     <!-- LOGIN -->
     <div id="login-screen">
-        <h1>Accesso Riservato</h1>
-        <input type="password" id="auth-code" placeholder="Codice (1234)">
-        <button class="btn" onclick="login()">Entra</button>
-        <p id="login-error">Codice errato</p>
+        <div class="card center-content">
+            <h1>🔒 Accesso</h1>
+            <input type="tel" id="auth-code" placeholder="Codice (1234)" style="text-align:center; letter-spacing: 5px;">
+            <br>
+            <button class="btn btn-primary full-width" onclick="login()">ENTRA</button>
+            <p id="login-error">Codice errato</p>
+        </div>
     </div>
 
     <!-- DASHBOARD -->
     <div id="dashboard" class="hidden">
+        
+        <!-- Header / Stats -->
         <header>
-            <h1>Mail Manager</h1>
-            <div class="stats" id="disk-stats">Caricamento spazio disco...</div>
+            <div class="logo">TempMail <span style="font-size:0.8em; color:var(--text-light)">Manager</span></div>
+            <div id="disk-stats" class="badge">Disco: ...</div>
         </header>
 
-        <!-- Crea Alias -->
-        <div class="card">
-            <div class="flex">
-                <span style="font-weight:bold">sterzomail+</span>
-                <input type="text" id="new-alias" placeholder="etichetta" style="width:100px">
-                <span style="font-weight:bold">@alwaysdata.net</span>
-
+        <!-- Form Creazione -->
+        <div class="card creation-bar">
+            <div class="input-group">
+                <span class="prefix">sterzomail+</span>
+                <input type="text" id="new-alias" placeholder="etichetta">
+            </div>
+            <div class="input-group">
                 <select id="duration">
                     <option value="1">1 Giorno</option>
                     <option value="7">1 Settimana</option>
+                    <option value="30">1 Mese</option>
                     <option value="inf">Infinito</option>
                 </select>
-                <button class="btn" onclick="createAlias()">Crea</button>
-                <button class="btn" onclick="loadData()">Aggiorna</button>
+                <button class="btn btn-primary" onclick="createAlias()">＋ Crea</button>
             </div>
-            <p style="font-size:0.8em; color:#666; margin-top:5px;">
-                Inserisci un nome (es. 'amazon') per creare sterzomail+amazon@alwaysdata.net
-            </p>
         </div>
 
-        <div class="grid">
-            <!-- Colonna SX: Alias -->
+        <div class="grid-layout">
+            
+            <!-- LISTA ALIAS -->
             <div class="card">
-                <h2>Account Attivi</h2>
-                <div style="overflow-x:auto;">
-                    <table id="alias-table">
-                        <thead><tr><th>Indirizzo</th><th>Scadenza</th><th>Az.</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
+                <div class="card-header">
+                    <h2>Account Attivi</h2>
+                    <button class="btn btn-sm" onclick="toggleSelectAll()" title="Seleziona tutti">☑ Tutti</button>
+                </div>
+                
+                <div class="alias-list-container">
+                    <ul id="alias-list">
+                        <!-- Popolato via JS -->
+                    </ul>
                 </div>
             </div>
 
-            <!-- Colonna DX: Posta -->
+            <!-- POSTA IN ARRIVO -->
             <div class="card">
-                <h2>Posta in arrivo (Tutti)</h2>
+                <div class="card-header">
+                    <h2>Posta in arrivo <span id="mail-count">(0)</span></h2>
+                    <button class="btn btn-sm" onclick="forceRefresh()" title="Aggiorna ora">↻</button>
+                </div>
+
                 <div id="mail-list">
                     <!-- Lista messaggi -->
                 </div>
-                
-                <div id="mail-view" class="hidden">
-                    <hr>
-                    <h3 id="view-subject"></h3>
-                    <p><strong>Da:</strong> <span id="view-from"></span> | <strong>A:</strong> <span id="view-to"></span></p>
-                    <div id="mail-content"></div>
-                    <button class="btn" onclick="closeMail()" style="margin-top:10px;">Chiudi</button>
+            </div>
+
+        </div> <!-- End Grid -->
+
+        <!-- MODALE VISTA MAIL -->
+        <div id="mail-view" class="overlay hidden">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="view-subject">Oggetto</h3>
+                    <button class="btn btn-close" onclick="closeMail()">✕</button>
+                </div>
+                <div class="modal-meta">
+                    <p><strong>Da:</strong> <span id="view-from"></span></p>
+                    <p><strong>A:</strong> <span id="view-to"></span></p>
+                </div>
+                <div class="modal-body" id="mail-content-wrapper">
+                    <!-- iframe here -->
                 </div>
             </div>
         </div>
-    </div>
 
+    </div>
 </div>
 
-<!-- Collegamento al file JS esterno (defer assicura che il DOM sia pronto) -->
 <script src="script.js" defer></script>
-
 </body>
 </html>
