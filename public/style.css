@@ -1,0 +1,105 @@
+:root { 
+    --bg: #f4f4f4; 
+    --card: #fff; 
+    --text: #333; 
+    --accent: #2c3e50; 
+    --danger: #e74c3c; 
+}
+
+body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+    background: var(--bg); 
+    color: var(--text); 
+    margin: 0; 
+    padding: 20px; 
+    font-size: 14px; 
+}
+
+.container { 
+    max-width: 900px; 
+    margin: 0 auto; 
+}
+
+/* Utils */
+.hidden { display: none !important; }
+.flex { display: flex; gap: 10px; align-items: center; }
+
+.btn { 
+    padding: 8px 12px; 
+    background: var(--accent); 
+    color: white; 
+    border: none; 
+    cursor: pointer; 
+    border-radius: 4px; 
+}
+.btn:hover { opacity: 0.9; }
+.btn-danger { background: var(--danger); }
+
+input, select { 
+    padding: 8px; 
+    border: 1px solid #ccc; 
+    border-radius: 4px; 
+}
+
+/* Login */
+#login-screen { text-align: center; margin-top: 100px; }
+#login-error { color: red; display: none; }
+
+/* Dashboard */
+header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    margin-bottom: 20px; 
+    padding-bottom: 10px; 
+    border-bottom: 2px solid #ddd; 
+}
+.stats { font-size: 0.9em; color: #666; }
+
+/* Layout */
+.grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+@media(max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+
+.card { 
+    background: var(--card); 
+    padding: 15px; 
+    border-radius: 8px; 
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    margin-bottom: 20px; 
+}
+h2 { 
+    margin-top: 0; 
+    font-size: 1.2em; 
+    border-bottom: 1px solid #eee; 
+    padding-bottom: 5px; 
+}
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+tr:hover { background: #f9f9f9; }
+.expired { color: var(--danger); text-decoration: line-through; }
+
+/* Mail List */
+#mail-list {
+    max-height: 300px; 
+    overflow-y: auto; 
+    border: 1px solid #eee;
+}
+
+.mail-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+.mail-item:hover { background: #f0f8ff; }
+.mail-item.active { background: #e0efff; border-left: 4px solid var(--accent); }
+
+.mail-header { font-weight: bold; display: flex; justify-content: space-between; }
+.mail-sub { color: #555; font-size: 0.9em; margin-top: 2px; }
+
+/* Mail View */
+#mail-content { 
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #fff; 
+    border: 1px solid #ddd; 
+    min-height: 200px; 
+}
+iframe { width: 100%; border: none; min-height: 300px; }

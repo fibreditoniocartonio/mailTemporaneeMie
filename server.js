@@ -15,12 +15,13 @@ const AUTH_CODE = '1234';
 // --- CONFIGURAZIONE IMAP (Modifica questi dati) ---
 const IMAP_CONFIG = {
     imap: {
-        user: 'sterzomail@.alwaysdata.net', // La tua mail reale catch-all
+        user: 'sterzomail@alwaysdata.net', // La tua mail reale catch-all
         password: 'SterzoMail115!',
-        host: 'imap.alwaysdata.net',
+        host: 'imap-sterzomail.alwaysdata.net',
         port: 993,
         tls: true,
-        authTimeout: 3000
+        tlsOptions: { rejectUnauthorized: false },
+        authTimeout: 10000
     }
 };
 
@@ -209,21 +210,27 @@ app.get('/api/data', requireAuth, (req, res) => {
 
 // Crea Alias
 app.post('/api/aliases', requireAuth, (req, res) => {
-    const { address, durationDays } = req.body;
-    if (!address) return res.status(400).json({ error: 'Manca indirizzo' });
-    
-    // Calcola scadenza
+    let { address, durationDays } = req.body;
+
+    // Forza il formato corretto: sterzomail+tag@alwaysdata.net
+    if (!address.startsWith('sterzomail+')) {
+        address = 'sterzomail+' + address;
+    }
+    if (!address.endsWith('@alwaysdata.net')) {
+        address = address + '@alwaysdata.net';
+    }
+
     let expiresAt = -1;
     if (durationDays !== 'inf') {
         expiresAt = Date.now() + (parseInt(durationDays) * 24 * 60 * 60 * 1000);
     }
 
     db.run(`INSERT INTO aliases (address, expires_at, created_at) VALUES (?, ?, ?)`,
-        [address, expiresAt, Date.now()],
-        function(err) {
-            if (err) return res.status(500).json({ error: 'Alias già esistente o errore DB' });
-            res.json({ success: true, id: this.lastID });
-        }
+           [address.toLowerCase(), expiresAt, Date.now()],
+           function(err) {
+               if (err) return res.status(500).json({ error: 'Etichetta già usata' });
+               res.json({ success: true, fullAddress: address });
+           }
     );
 });
 
