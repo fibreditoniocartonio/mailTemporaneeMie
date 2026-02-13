@@ -71,9 +71,8 @@ function renderAliases() {
     rawAliases.forEach(a => {
         const li = document.createElement('li');
         li.className = 'alias-item';
-        const exp = a.expires_at === -1 ? '∞' : new Date(a.expires_at).toLocaleDateString();
-        
-        // Checkbox state
+        const d = new Date(a.expires_at);
+        const exp = a.expires_at === -1 ? '∞' : `${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
         const isChecked = selectedAliases.has(a.id) ? 'checked' : '';
 
         li.innerHTML = `
@@ -86,11 +85,19 @@ function renderAliases() {
             </div>
             <div class="alias-actions">
                 <button class="btn btn-sm" onclick="purgeAlias(${a.id})" title="Svuota mail vecchie">🧹</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteAlias(${a.id})" title="Elimina account">X</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteAlias(${a.id})" title="Elimina account">🗑</button>
             </div>
         `;
         list.appendChild(li);
     });
+}
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
 function renderMail() {
@@ -110,17 +117,20 @@ function renderMail() {
         const div = document.createElement('div');
         div.className = 'mail-item';
         const date = new Date(m.received_at).toLocaleString();
+        const paperclip = m.has_attachments ? ' 📎' : '';
+        const sizeStr = formatBytes(m.size);
         
         // Trova alias name per visualizzazione
         const aliasName = rawAliases.find(a => a.id === m.alias_id)?.address || '?';
 
         div.innerHTML = `
             <div class="mail-info" onclick="openMail(${m.id})">
-                <span class="mail-date">${date} -> [${aliasName}]</span>
+                <span class="mail-date">${date} • ${sizeStr}</span>
                 <div class="mail-from">${m.from_addr}</div>
-                <div class="mail-sub">${m.subject}</div>
-            </div>
-            <div class="mail-actions">
+                <div class="mail-sub">${m.subject}${paperclip}</div>
+                <span class="mail-date">[${aliasName}]</span>
+                </div>
+                <div class="mail-actions">
                 <button class="btn btn-sm btn-danger" onclick="deleteMsg(${m.id})">🗑</button>
             </div>
         `;
@@ -158,9 +168,11 @@ function copyToClipboard(text) {
 
 // Create Alias
 async function createAlias() {
-    const addr = document.getElementById('new-alias').value;
-    const dur = document.getElementById('duration').value;
+    const rawAddr = document.getElementById('new-alias').value;
+    // Sostituisce tutto ciò che non è lettera, numero, punto o trattino con underscore
+    const addr = rawAddr.replace(/[^a-z0-9.\-]/gi, '_');
     if(!addr) return;
+    const dur = document.getElementById('duration').value;
 
     const res = await fetch('/api/aliases', {
         method: 'POST', headers: {'Content-Type':'application/json'},
@@ -216,15 +228,42 @@ function openMail(id) {
     document.getElementById('view-subject').textContent = m.subject;
     document.getElementById('view-from').textContent = m.from_addr;
     document.getElementById('view-to').textContent = m.alias_address;
-    
+
+    // --- GESTIONE ALLEGATI ---
+    const metaDiv = document.querySelector('.modal-meta');
+    // Rimuovi vecchi allegati se presenti
+    const oldAtt = document.getElementById('att-list');
+    if(oldAtt) oldAtt.remove();
+
+    if(m.attachments_list && m.attachments_list.length > 0) {
+        const attContainer = document.createElement('div');
+        attContainer.id = 'att-list';
+        attContainer.style.paddingTop = '10px';
+        attContainer.innerHTML = '<strong>Allegati:</strong> ';
+
+        m.attachments_list.forEach(att => {
+            const link = document.createElement('a');
+            link.href = `/api/attachments/${att.id}`;
+            link.target = '_blank';
+            link.innerText = `[${att.filename} (${formatBytes(att.size)})]`;
+            link.style.marginRight = '10px';
+            link.style.textDecoration = 'none';
+            link.style.color = 'var(--primary)';
+            attContainer.appendChild(link);
+        });
+        metaDiv.appendChild(attContainer);
+    }
+    // -------------------------
+
     const wrapper = document.getElementById('mail-content-wrapper');
     wrapper.innerHTML = '';
     const iframe = document.createElement('iframe');
     wrapper.appendChild(iframe);
-    
+
     const doc = iframe.contentWindow.document;
     doc.open();
-    // Styling base dentro l'iframe per leggibilità
+    // Aggiungo <base target="_blank"> per aprire i link in nuova scheda (Punto 6)
+    doc.write(`<head><base target="_blank"></head>`);
     doc.write(`<style>body{font-family:sans-serif; padding:10px; margin:0; word-wrap: break-word;}</style>`);
     doc.write(m.body_html || `<pre style="white-space:pre-wrap">${m.body_text}</pre>`);
     doc.close();

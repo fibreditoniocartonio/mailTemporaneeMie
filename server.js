@@ -43,7 +43,18 @@ db.serialize(() => {
         body_text TEXT,
         body_html TEXT,
         received_at INTEGER,
+        size INTEGER DEFAULT 0,
+        has_attachments INTEGER DEFAULT 0,
         FOREIGN KEY(alias_id) REFERENCES aliases(id) ON DELETE CASCADE
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER,
+        filename TEXT,
+        content_type TEXT,
+        data BLOB,
+        size INTEGER,
+        FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
     )`);
 });
 
@@ -147,6 +158,7 @@ async function fetchMailAndCleanup() {
         for (let item of messages) {
             const all = item.parts.find(part => part.which === '');
             const id = item.attributes.uid;
+            const msgSize = item.attributes.size || 0;
             const idHeader = "imap-" + id;
             
             const parsed = await simpleParser(all.body);
@@ -171,20 +183,38 @@ async function fetchMailAndCleanup() {
             }
 
             if (targetAlias) {
-                // Salva messaggio
-                db.run(`INSERT INTO messages (alias_id, from_addr, subject, body_text, body_html, received_at) VALUES (?, ?, ?, ?, ?, ?)`,
-                    [targetAlias.id, parsed.from.text, parsed.subject, parsed.text, parsed.html || parsed.textAsHtml, Date.now()]
+                // Gestione Allegati
+                const hasAttachments = parsed.attachments && parsed.attachments.length > 0 ? 1 : 0;
+
+                // Salva messaggio con size e flag allegati
+                db.run(`INSERT INTO messages (alias_id, from_addr, subject, body_text, body_html, received_at, size, has_attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                       [targetAlias.id, parsed.from.text, parsed.subject, parsed.text, parsed.html || parsed.textAsHtml, Date.now(), msgSize, hasAttachments],
+                       function(err) {
+                           if (err) return console.error(err);
+                           const newMsgId = this.lastID;
+
+                           // Salva Allegati se ci sono
+                           if (hasAttachments) {
+                               parsed.attachments.forEach(att => {
+                                   db.run(`INSERT INTO attachments (message_id, filename, content_type, data, size) VALUES (?, ?, ?, ?, ?)`,
+                                          [newMsgId, att.filename, att.contentType, att.content, att.size]
+                                   );
+                               });
+                           }
+                       }
                 );
+
                 console.log(`Mail salvata per ${targetAlias.address}`);
-                // Cancella dal server IMAP per risparmiare spazio (l'abbiamo salvata in DB locale)
                 await connection.deleteMessage(id);
             } else {
-                // Mail non per noi o alias scaduto -> Cancella dal server
-                console.log(`Mail ignorata (destinatario sconosciuto): ${parsed.subject}`);
+                console.log(`Mail ignorata: ${parsed.subject}`);
                 await connection.deleteMessage(id);
             }
         }
-        
+        connection.imap.expunge((err) => {
+            if(err) console.error("Errore Expunge:", err);
+            else console.log("Expunge completato (spazio liberato).");
+        });
         connection.end();
     } catch (e) {
         console.error("Errore IMAP:", e);
@@ -229,16 +259,40 @@ app.get('/api/data', requireAuth, (req, res) => {
     });
 
     const p2 = new Promise((resolve) => {
-        db.all(`SELECT messages.*, aliases.address as alias_address 
-                FROM messages 
-                JOIN aliases ON messages.alias_id = aliases.id 
-                ORDER BY received_at DESC`, [], (err, rows) => resolve(rows));
+        const sql = `
+        SELECT m.*, a.address as alias_address,
+        (SELECT json_group_array(json_object('id', att.id, 'filename', att.filename, 'size', att.size))
+        FROM attachments att WHERE att.message_id = m.id) as attachments_json
+        FROM messages m
+        JOIN aliases a ON m.alias_id = a.id
+        ORDER BY received_at DESC
+        `;
+        db.all(sql, [], (err, rows) => {
+            if(rows) {
+                // Parse del JSON string restituito da sqlite
+                rows.forEach(r => {
+                    if(r.attachments_json) r.attachments_list = JSON.parse(r.attachments_json);
+                    else r.attachments_list = [];
+                });
+            }
+            resolve(rows || []);
+        });
     });
 
     const p3 = new Promise((resolve) => getDiskUsage((err, data) => resolve(data || {})));
 
     Promise.all([p1, p2, p3]).then(([aliases, messages, disk]) => {
         res.json({ aliases, messages, disk });
+    });
+});
+
+// Download Allegato
+app.get('/api/attachments/:id', requireAuth, (req, res) => {
+    db.get(`SELECT * FROM attachments WHERE id = ?`, [req.params.id], (err, row) => {
+        if (!row) return res.status(404).send('Not found');
+        res.setHeader('Content-Type', row.content_type);
+        res.setHeader('Content-Disposition', `attachment; filename="${row.filename}"`);
+        res.send(row.data);
     });
 });
 
@@ -275,6 +329,53 @@ app.delete('/api/aliases/:id', requireAuth, (req, res) => {
         db.run(`DELETE FROM messages WHERE alias_id = ?`, [req.params.id]);
         res.json({ success: true });
     });
+});
+
+// Elimina singole Mail
+app.delete('/api/messages/:id', requireAuth, (req, res) => {
+    const id = req.params.id;
+    // Cancella il messaggio dal DB
+    db.run(`DELETE FROM messages WHERE id = ?`, [id], function(err) {
+        if (err) {
+            console.error("Errore cancellazione msg:", err);
+            return res.status(500).json({ success: false });
+        }
+        // Nota: Gli allegati vengono cancellati automaticamente grazie al CASCADE impostato nel DB
+        res.json({ success: true });
+    });
+});
+
+// Elimina messaggi antecedenti la data comunicata (bottone scopa)
+app.delete('/api/aliases/:id/purge', requireAuth, (req, res) => {
+    const aliasId = req.params.id;
+    const beforeTimestamp = parseInt(req.query.before);
+
+    if (!beforeTimestamp) {
+        return res.status(400).json({ error: 'Data limite mancante' });
+    }
+
+    db.run(`DELETE FROM messages WHERE alias_id = ? AND received_at < ?`,
+           [aliasId, beforeTimestamp],
+           function(err) {
+               if (err) {
+                   console.error("Errore durante il purge:", err);
+                   return res.status(500).json({ success: false });
+               }
+               console.log(`Purge completato: eliminati ${this.changes} messaggi.`);
+               res.json({ success: true, count: this.changes });
+           }
+    );
+});
+
+// Forza controllo posta
+app.post('/api/refresh', requireAuth, async (req, res) => {
+    try {
+        await fetchMailAndCleanup();
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Errore refresh manuale:", e);
+        res.status(500).json({ error: 'Errore durante il recupero mail' });
+    }
 });
 
 // Server Start
