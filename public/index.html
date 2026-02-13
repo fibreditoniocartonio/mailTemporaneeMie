@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TempMail Manager</title>
+    <style>
+        :root { --bg: #f4f4f4; --card: #fff; --text: #333; --accent: #2c3e50; --danger: #e74c3c; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; font-size: 14px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        
+        /* Utils */
+        .hidden { display: none !important; }
+        .flex { display: flex; gap: 10px; align-items: center; }
+        .btn { padding: 8px 12px; background: var(--accent); color: white; border: none; cursor: pointer; border-radius: 4px; }
+        .btn:hover { opacity: 0.9; }
+        .btn-danger { background: var(--danger); }
+        input, select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        
+        /* Login */
+        #login-screen { text-align: center; margin-top: 100px; }
+        
+        /* Dashboard */
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #ddd; }
+        .stats { font-size: 0.9em; color: #666; }
+        
+        /* Layout */
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        @media(max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+        
+        .card { background: var(--card); padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2 { margin-top: 0; font-size: 1.2em; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+        tr:hover { background: #f9f9f9; }
+        .expired { color: var(--danger); text-decoration: line-through; }
+        
+        /* Mail List */
+        .mail-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+        .mail-item:hover { background: #f0f8ff; }
+        .mail-item.active { background: #e0efff; border-left: 4px solid var(--accent); }
+        .mail-header { font-weight: bold; display: flex; justify-content: space-between; }
+        .mail-sub { color: #555; font-size: 0.9em; margin-top: 2px; }
+        
+        /* Mail View */
+        #mail-content { margin-top: 20px; padding: 15px; background: #fff; border: 1px solid #ddd; min-height: 200px; }
+        iframe { width: 100%; border: none; min-height: 300px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- LOGIN -->
+    <div id="login-screen">
+        <h1>Accesso Riservato</h1>
+        <input type="password" id="auth-code" placeholder="Codice (1234)">
+        <button class="btn" onclick="login()">Entra</button>
+        <p id="login-error" style="color:red; display:none;">Codice errato</p>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dashboard" class="hidden">
+        <header>
+            <h1>Mail Manager</h1>
+            <div class="stats" id="disk-stats">Caricamento spazio disco...</div>
+        </header>
+
+        <!-- Crea Alias -->
+        <div class="card">
+            <div class="flex">
+                <input type="text" id="new-alias" placeholder="nuova-mail@tuodominio.ext">
+                <select id="duration">
+                    <option value="1">1 Giorno</option>
+                    <option value="7">1 Settimana</option>
+                    <option value="30">1 Mese</option>
+                    <option value="inf">Infinito (31/12/2999)</option>
+                </select>
+                <button class="btn" onclick="createAlias()">Crea Account</button>
+                <button class="btn" onclick="loadData()">Aggiorna</button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Colonna SX: Alias -->
+            <div class="card">
+                <h2>Account Attivi</h2>
+                <div style="overflow-x:auto;">
+                    <table id="alias-table">
+                        <thead><tr><th>Indirizzo</th><th>Scadenza</th><th>Az.</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Colonna DX: Posta -->
+            <div class="card">
+                <h2>Posta in arrivo (Tutti)</h2>
+                <div id="mail-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee;">
+                    <!-- Lista messaggi -->
+                </div>
+                
+                <div id="mail-view" class="hidden">
+                    <hr>
+                    <h3 id="view-subject"></h3>
+                    <p><strong>Da:</strong> <span id="view-from"></span> | <strong>A:</strong> <span id="view-to"></span></p>
+                    <div id="mail-content"></div>
+                    <button class="btn" onclick="closeMail()" style="margin-top:10px;">Chiudi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    let rawMessages = [];
+
+    // --- AUTH ---
+    async function checkAuth() {
+        const res = await fetch('/api/check-auth');
+        const data = await res.json();
+        if(data.authed) showDashboard();
+    }
+    
+    async function login() {
+        const code = document.getElementById('auth-code').value;
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ code })
+        });
+        const data = await res.json();
+        if(data.success) showDashboard();
+        else document.getElementById('login-error').style.display = 'block';
+    }
+
+    function showDashboard() {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        loadData();
+    }
+
+    // --- DATA ---
+    async function loadData() {
+        const res = await fetch('/api/data');
+        if(res.status === 401) return location.reload();
+        const data = await res.json();
+        
+        // Disk Stats
+        const disk = data.disk;
+        document.getElementById('disk-stats').textContent = 
+            `Disco: ${disk.used || '?'} usato su ${disk.size || '?'} (${disk.percent || '?'}%)`;
+
+        // Render Aliases
+        const tbody = document.querySelector('#alias-table tbody');
+        tbody.innerHTML = '';
+        data.aliases.forEach(a => {
+            const expDate = a.expires_at === -1 ? 'Mai' : new Date(a.expires_at).toLocaleDateString();
+            const tr = document.createElement('tr');
+            if(a.is_expired) tr.classList.add('expired');
+            
+            tr.innerHTML = `
+                <td title="${a.address}" style="max-width:100px; overflow:hidden; text-overflow:ellipsis;">${a.address}</td>
+                <td>${expDate}</td>
+                <td><button class="btn btn-danger" style="padding:2px 6px; font-size:10px" onclick="deleteAlias(${a.id})">X</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Render Messages List
+        rawMessages = data.messages;
+        renderMailList(data.messages);
+    }
+
+    function renderMailList(msgs) {
+        const container = document.getElementById('mail-list');
+        container.innerHTML = '';
+        if(msgs.length === 0) {
+            container.innerHTML = '<p style="padding:10px; color:#999;">Nessun messaggio.</p>';
+            return;
+        }
+
+        msgs.forEach((m, idx) => {
+            const div = document.createElement('div');
+            div.className = 'mail-item';
+            const date = new Date(m.received_at).toLocaleString();
+            div.innerHTML = `
+                <div class="mail-header"><span>${m.from_addr}</span> <small>${date}</small></div>
+                <div class="mail-sub"><strong>[${m.alias_address}]</strong> ${m.subject}</div>
+            `;
+            div.onclick = () => openMail(idx);
+            container.appendChild(div);
+        });
+    }
+
+    // --- ACTIONS ---
+    async function createAlias() {
+        const addr = document.getElementById('new-alias').value;
+        const dur = document.getElementById('duration').value;
+        if(!addr) return alert("Inserisci indirizzo");
+
+        const res = await fetch('/api/aliases', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ address: addr, durationDays: dur })
+        });
+        
+        if(res.ok) {
+            document.getElementById('new-alias').value = '';
+            loadData();
+        } else {
+            alert("Errore creazione. Forse esiste già?");
+        }
+    }
+
+    async function deleteAlias(id) {
+        if(!confirm("Eliminare account e tutte le sue mail?")) return;
+        await fetch(`/api/aliases/${id}`, { method: 'DELETE' });
+        loadData();
+    }
+
+    function openMail(idx) {
+        const m = rawMessages[idx];
+        document.getElementById('mail-view').classList.remove('hidden');
+        document.getElementById('view-subject').textContent = m.subject;
+        document.getElementById('view-from').textContent = m.from_addr;
+        document.getElementById('view-to').textContent = m.alias_address;
+        
+        // Use iframe for HTML content safety/rendering
+        const container = document.getElementById('mail-content');
+        container.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        container.appendChild(iframe);
+        
+        const doc = iframe.contentWindow.document;
+        doc.open();
+        doc.write(m.body_html || `<pre>${m.body_text}</pre>`);
+        doc.close();
+    }
+
+    function closeMail() {
+        document.getElementById('mail-view').classList.add('hidden');
+    }
+
+    // Init
+    checkAuth();
+</script>
+
+</body>
+</html>
