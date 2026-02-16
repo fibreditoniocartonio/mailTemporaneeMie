@@ -12,10 +12,10 @@ const PORT = process.env.PORT || 3000;
 const DB_FILE = 'mailmanager.db';
 const AUTH_CODE = '1234';
 
-// --- CONFIGURAZIONE IMAP (Modifica questi dati) ---
+// --- CONFIGURAZIONE IMAP ---
 const IMAP_CONFIG = {
     imap: {
-        user: 'sterzomail@alwaysdata.net', // La tua mail reale catch-all
+        user: 'sterzomail@alwaysdata.net',
         password: 'SterzoMail115!',
         host: 'imap-sterzomail.alwaysdata.net',
         port: 993,
@@ -56,6 +56,10 @@ db.serialize(() => {
         size INTEGER,
         FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
     )`);
+    const baseMail = IMAP_CONFIG.imap.user; // account senza alias
+    db.run(`INSERT OR IGNORE INTO aliases (address, expires_at, created_at) VALUES (?, -1, ?)`,
+           [baseMail, Date.now()]
+    );
 });
 
 // --- MIDDLEWARE ---
@@ -158,7 +162,7 @@ async function fetchMailAndCleanup() {
         for (let item of messages) {
             const all = item.parts.find(part => part.which === '');
             const id = item.attributes.uid;
-            const msgSize = item.attributes.size || 0;
+            const msgSize = all.body.length || item.attributes.size || 0;
             const idHeader = "imap-" + id;
             
             const parsed = await simpleParser(all.body);
@@ -249,11 +253,17 @@ app.get('/api/data', requireAuth, (req, res) => {
     
     const p1 = new Promise((resolve) => {
         db.all(`SELECT * FROM aliases ORDER BY created_at DESC`, [], (err, rows) => {
-            // Aggiungi flag scaduto
-            const result = rows.map(r => ({
+            if (err) return resolve([]); // Gestione errore base
+            let result = rows.map(r => ({
                 ...r,
                 is_expired: (r.expires_at !== -1 && r.expires_at < now)
             }));
+            const baseMail = IMAP_CONFIG.imap.user;
+            const baseAccount = result.find(r => r.address === baseMail);
+            const others = result.filter(r => r.address !== baseMail);
+            if (baseAccount) {
+                result = [...others, baseAccount];
+            }
             resolve(result);
         });
     });
@@ -324,10 +334,14 @@ app.post('/api/aliases', requireAuth, (req, res) => {
 
 // Elimina Alias
 app.delete('/api/aliases/:id', requireAuth, (req, res) => {
-    db.run(`DELETE FROM aliases WHERE id = ?`, [req.params.id], (err) => {
-        // Cascade dovrebbe pulire i messaggi, altrimenti il fetch loop lo farà
-        db.run(`DELETE FROM messages WHERE alias_id = ?`, [req.params.id]);
-        res.json({ success: true });
+    db.get(`SELECT address FROM aliases WHERE id = ?`, [req.params.id], (err, row) => {
+        if (row && row.address === IMAP_CONFIG.imap.user) {
+            return res.status(403).json({ error: 'Impossibile eliminare account base' });
+        }
+        db.run(`DELETE FROM aliases WHERE id = ?`, [req.params.id], (err) => {
+            db.run(`DELETE FROM messages WHERE alias_id = ?`, [req.params.id]);
+            res.json({ success: true });
+        });
     });
 });
 

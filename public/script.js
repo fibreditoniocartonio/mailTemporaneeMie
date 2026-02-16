@@ -73,6 +73,8 @@ function renderAliases() {
         li.className = 'alias-item';
         const d = new Date(a.expires_at);
         const exp = a.expires_at === -1 ? '∞' : `${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+        const isBaseAccount = a.address === 'sterzomail@alwaysdata.net';
+        const deleteBtn = isBaseAccount ? `<button class="btn btn-sm" style="visibility:hidden">🗑</button>` : `<button class="btn btn-sm btn-danger" onclick="deleteAlias(${a.id})" title="Elimina account">🗑</button>`;
         const isChecked = selectedAliases.has(a.id) ? 'checked' : '';
 
         li.innerHTML = `
@@ -80,12 +82,12 @@ function renderAliases() {
                 <input type="checkbox" onchange="toggleAlias(${a.id}, this.checked)" ${isChecked}>
                 <div style="min-width:0;">
                     <div class="alias-addr" onclick="copyToClipboard('${a.address}')" title="Clicca per copiare">${a.address}</div>
-                    <div class="alias-exp">Scade: ${exp}</div>
+                    <div class="alias-exp">${isBaseAccount ? `Account Primario` : `Scade: ${exp}`}</div>
                 </div>
             </div>
             <div class="alias-actions">
                 <button class="btn btn-sm" onclick="purgeAlias(${a.id})" title="Svuota mail vecchie">🧹</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteAlias(${a.id})" title="Elimina account">🗑</button>
+                ${deleteBtn}
             </div>
         `;
         list.appendChild(li);
